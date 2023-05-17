@@ -1,5 +1,6 @@
 use anyhow::Context;
-use tracing::{debug, info, Level};
+use clap::{Parser, Subcommand};
+use tracing::{debug, info, Level, error};
 use tracing_subscriber::{
     filter::LevelFilter, fmt::writer::MakeWriterExt, layer::SubscriberExt, util::SubscriberInitExt,
     Layer,
@@ -33,17 +34,52 @@ fn init_logging() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
-    init_logging()?;
-    let mut state = State::load().context("while loading state")?;
+#[derive(Parser, Debug)]
+struct Args {
+    /// Subcommand to run
+    #[command(subcommand)]
+    command: Option<Command>,
+}
 
+#[derive(Subcommand, Debug, Default)]
+enum Command {
+    /// Run the daemon which changes the wallpaper at specific times
+    #[default]
+    Daemon,
+    /// Set a new image now
+    Switch,
+    /// Check the config for errors
+    Check,
+}
+
+fn check(state: &mut State) -> anyhow::Result<()> {
+    info!("checking the config for errors");
+
+    for file_path in state.config.images.keys() {
+        let image = state.config.image_dir.join(file_path);
+        if !image.is_file() {
+            error!("image {} does not exist!", image.to_string_lossy());
+        }
+    }
+
+    info!("checked the config for errors");
+
+    Ok(())
+}
+
+fn switch(state: &mut State) -> anyhow::Result<()> {
+    info!("switching one time");
+
+    update_image(state).context("while updating state")?;
+
+    info!("switched one time");
+    Ok(())
+}
+
+fn daemon(state: &mut State) -> anyhow::Result<()> {
     info!("starting mainloop");
 
     loop {
-        debug!("reloading state");
-        state.reload().context("while reloading state")?;
-        debug!("reloaded state");
-
         let check_interval = state.config.check_interval.as_nanos();
         let update_interval = state.config.update_interval.as_nanos();
 
@@ -61,7 +97,7 @@ fn main() -> anyhow::Result<()> {
 
         if last_time / update_interval < current_time / update_interval {
             info!("updating wallpaper");
-            update_image(&mut state).context("while updating state")?;
+            update_image(state).context("while updating state")?;
         }
 
         let to_sleep = check_interval - (current_time % check_interval);
@@ -70,5 +106,23 @@ fn main() -> anyhow::Result<()> {
         std::thread::sleep(std::time::Duration::from_nanos(
             to_sleep.try_into().context("can't sleep that long")?,
         ));
+
+        debug!("reloading state");
+        state.reload().context("while reloading state")?;
+        debug!("reloaded state");
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    init_logging()?;
+
+    let args = Args::parse();
+
+    let mut state = State::load().context("while loading state")?;
+
+    match args.command.unwrap_or_default() {
+        Command::Daemon => daemon(&mut state),
+        Command::Switch => switch(&mut state),
+        Command::Check => check(&mut state),
     }
 }
