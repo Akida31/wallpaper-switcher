@@ -38,13 +38,12 @@ fn init_logging() -> anyhow::Result<()> {
 struct Args {
     /// Subcommand to run
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Command,
 }
 
-#[derive(Subcommand, Debug, Default)]
+#[derive(Subcommand, Debug)]
 enum Command {
     /// Run the daemon which changes the wallpaper at specific times
-    #[default]
     Daemon,
     /// Set a new image now
     Switch,
@@ -120,7 +119,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut state = State::load().context("while loading state")?;
 
-    match args.command.unwrap_or_default() {
+    match args.command {
         Command::Daemon => daemon(&mut state),
         Command::Switch => switch(&mut state),
         Command::Check => check(&mut state),
