@@ -6,7 +6,7 @@ use tracing_subscriber::{
     Layer,
 };
 
-use wallpaper::{update_image, State};
+use wallpaper::{update_image, State, init_sww};
 
 fn init_logging() -> anyhow::Result<()> {
     let project_dirs = State::project_dirs()?;
@@ -67,6 +67,7 @@ fn check(state: &mut State) -> anyhow::Result<()> {
 }
 
 fn switch(state: &mut State) -> anyhow::Result<()> {
+    init_sww()?;
     info!("switching one time");
 
     update_image(state).context("while updating state")?;
@@ -76,6 +77,7 @@ fn switch(state: &mut State) -> anyhow::Result<()> {
 }
 
 fn daemon(state: &mut State) -> anyhow::Result<()> {
+    init_sww()?;
     info!("starting mainloop");
 
     loop {
