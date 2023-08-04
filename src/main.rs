@@ -49,6 +49,30 @@ enum Command {
     Switch,
     /// Check the config for errors
     Check,
+    /// Print the current state and config
+    Print,
+}
+
+fn print_state(state: &mut State) -> anyhow::Result<()> {
+    println!("last update: {}", state.cache.last_update);
+    if let Some(transition) = &state.cache.last_transition {
+        println!("last transition: {}", transition);
+    }
+    if let Some(image) = &state.cache.last_image {
+        println!("last image: {}", image.to_string_lossy());
+    }
+    println!("check interval: {}", state.config.check_interval);
+    println!("update interval: {}", state.config.update_interval);
+    println!("transitions: {:#?}", state.config.transitions);
+    let images: Vec<_> = state.config.images.iter().map(|(name, times)| {
+        let times = times.iter().map(|time| time.to_string()).collect::<Vec<_>>().join(", ");
+        format!("{}: [{}]", name, times)
+    }).collect();
+    println!("images: {:#?}", images);
+    println!("image directory: {}", state.config.image_dir.to_string_lossy());
+    println!("fps: {}", state.config.fps);
+
+    Ok(())
 }
 
 fn check(state: &mut State) -> anyhow::Result<()> {
@@ -130,5 +154,6 @@ fn main() -> anyhow::Result<()> {
         Command::Daemon => daemon(&mut state),
         Command::Switch => switch(&mut state),
         Command::Check => check(&mut state),
+        Command::Print => print_state(&mut state),
     }
 }
