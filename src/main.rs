@@ -17,7 +17,7 @@ fn init_logging() -> anyhow::Result<()> {
                     project_dirs.cache_dir().join("logs"),
                     "wallpaper.log",
                 )
-                .with_max_level(Level::DEBUG),
+                .with_max_level(Level::TRACE),
             ),
         )
         .with(
