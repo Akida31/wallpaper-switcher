@@ -224,6 +224,18 @@ impl ValidTime {
         (self.start..=self.end).contains(time)
     }
 
+    pub fn check(&self) -> Result<(), String> {
+        if self.start > self.end {
+            Err(format!(
+                "invalid time: {} must be before {}",
+                Self::to_s(&self.start),
+                Self::to_s(&self.end)
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     fn to_s(date: &NaiveTime) -> impl std::fmt::Display {
         if date.second() != 0 {
             date.format("%H:%M:%S")

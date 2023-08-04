@@ -54,10 +54,15 @@ enum Command {
 fn check(state: &mut State) -> anyhow::Result<()> {
     info!("checking the config for errors");
 
-    for file_path in state.config.images.keys() {
+    for (file_path, times) in &state.config.images {
         let image = state.config.image_dir.join(file_path);
         if !image.is_file() {
             error!("image {} does not exist!", image.to_string_lossy());
+        }
+        for time in times {
+            if let Err(e) = time.check() {
+                error!("image {}: {}. Consider creating multiple time slots", image.to_string_lossy(), e);
+            }
         }
     }
 
