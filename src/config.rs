@@ -223,6 +223,22 @@ impl ValidTime {
     pub fn matches(&self, time: &NaiveTime) -> bool {
         (self.start..=self.end).contains(time)
     }
+
+    fn to_s(date: &NaiveTime) -> impl std::fmt::Display {
+        if date.second() != 0 {
+            date.format("%H:%M:%S")
+        } else if date.minute() != 0 {
+            date.format("%H:%M")
+        } else {
+            date.format("%H")
+        }
+    }
+}
+
+impl std::fmt::Display for ValidTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}-{}", Self::to_s(&self.start), Self::to_s(&self.end))
+    }
 }
 
 impl serde::Serialize for ValidTime {
@@ -230,16 +246,7 @@ impl serde::Serialize for ValidTime {
     where
         S: serde::Serializer,
     {
-        fn to_s(date: &NaiveTime) -> impl std::fmt::Display {
-            if date.second() != 0 {
-                date.format("%H:%M:%S")
-            } else if date.minute() != 0 {
-                date.format("%H:%M")
-            } else {
-                date.format("%H")
-            }
-        }
-        let v = format!("{}-{}", to_s(&self.start), to_s(&self.end));
+        let v = self.to_string();
         serializer.serialize_str(&v)
     }
 }
