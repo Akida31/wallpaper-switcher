@@ -71,7 +71,7 @@ pub fn update_image(state: &mut State) -> anyhow::Result<()> {
 
         if !cmd.status.success() {
             error!(
-                "ewww returned error. Exit Code: {}.\nStdout: {}\n\nStderr:{}",
+                "swww returned error. Exit Code: {}.\nStdout: {}\n\nStderr:{}",
                 cmd.status,
                 String::from_utf8_lossy(&cmd.stdout),
                 String::from_utf8_lossy(&cmd.stderr)
