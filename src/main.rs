@@ -53,7 +53,7 @@ enum Command {
     Print,
 }
 
-fn print_state(state: &mut State) -> anyhow::Result<()> {
+fn print_state(state: &State) -> anyhow::Result<()> {
     println!("last update: {}", state.cache.last_update);
     if let Some(transition) = &state.cache.last_transition {
         println!("last transition: {}", transition);
@@ -75,7 +75,7 @@ fn print_state(state: &mut State) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn check(state: &mut State) -> anyhow::Result<()> {
+fn check(state: &State) -> anyhow::Result<()> {
     info!("checking the config for errors");
 
     for (file_path, times) in &state.config.images {
@@ -153,7 +153,7 @@ fn main() -> anyhow::Result<()> {
     match args.command {
         Command::Daemon => daemon(&mut state),
         Command::Switch => switch(&mut state),
-        Command::Check => check(&mut state),
-        Command::Print => print_state(&mut state),
+        Command::Check => check(&state),
+        Command::Print => print_state(&state),
     }
 }

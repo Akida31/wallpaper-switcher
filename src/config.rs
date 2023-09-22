@@ -5,7 +5,7 @@ use chrono::{NaiveTime, Timelike};
 use directories::ProjectDirs;
 use humantime::{Duration, Timestamp};
 use serde::{de::Error, Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -35,8 +35,11 @@ impl Default for Config {
     }
 }
 
+const CACHE_VERSION: usize = 0;
+
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct Cache {
+    version: usize,
     #[serde(serialize_with = "ser_timestamp")]
     #[serde(deserialize_with = "deser_timestamp")]
     pub last_update: Timestamp,
@@ -55,6 +58,7 @@ impl Cache {
 impl Default for Cache {
     fn default() -> Self {
         Self {
+            version: CACHE_VERSION,
             last_update: std::time::UNIX_EPOCH.into(),
             last_image: None,
             last_transition: None,
@@ -101,13 +105,20 @@ impl State {
             debug!("reading cache file");
             let file = std::fs::File::open(&cache_file).context("while opening cache file")?;
             let cache: Cache = serde_json::from_reader(file).context("while parsing cache file")?;
-            if cache.last_image.is_some() {
-                self.cache.last_image = cache.last_image;
+            if cache.version != CACHE_VERSION {
+                error!(
+                    "read cache with incompatible version. Expected version {} but got {}",
+                    CACHE_VERSION, cache.version
+                );
+            } else {
+                if cache.last_image.is_some() {
+                    self.cache.last_image = cache.last_image;
+                }
+                if cache.last_transition.is_some() {
+                    self.cache.last_transition = cache.last_transition;
+                }
+                self.cache.last_update = cache.last_update;
             }
-            if cache.last_transition.is_some() {
-                self.cache.last_transition = cache.last_transition;
-            }
-            self.cache.last_update = cache.last_update;
         } else {
             info!(
                 "no cache file found. Writing default to {}",
