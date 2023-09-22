@@ -1,12 +1,12 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use tracing::{debug, info, Level, error};
+use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::{
     filter::LevelFilter, fmt::writer::MakeWriterExt, layer::SubscriberExt, util::SubscriberInitExt,
     Layer,
 };
 
-use wallpaper::{update_image, State, init_sww};
+use wallpaper::{get_monitors, init_sww, update_wallpapers, Monitors, State};
 
 fn init_logging() -> anyhow::Result<()> {
     let project_dirs = State::project_dirs()?;
@@ -46,7 +46,10 @@ enum Command {
     /// Run the daemon which changes the wallpaper at specific times
     Daemon,
     /// Set a new image now
-    Switch,
+    Switch {
+        /// Only switch the wallpaper for this monitor
+        monitor: Option<String>,
+    },
     /// Check the config for errors
     Check,
     /// Print the current state and config
@@ -55,21 +58,37 @@ enum Command {
 
 fn print_state(state: &State) -> anyhow::Result<()> {
     println!("last update: {}", state.cache.last_update);
-    if let Some(transition) = &state.cache.last_transition {
-        println!("last transition: {}", transition);
+    for (monitor, transition) in &state.cache.last_transitions {
+        println!("last transition for monitor {}: {}", monitor, transition);
     }
-    if let Some(image) = &state.cache.last_image {
-        println!("last image: {}", image.to_string_lossy());
+    for (monitor, image) in &state.cache.last_images {
+        println!(
+            "last image for monitor {}: {}",
+            monitor,
+            image.to_string_lossy()
+        );
     }
     println!("check interval: {}", state.config.check_interval);
     println!("update interval: {}", state.config.update_interval);
     println!("transitions: {:#?}", state.config.transitions);
-    let images: Vec<_> = state.config.images.iter().map(|(name, times)| {
-        let times = times.iter().map(|time| time.to_string()).collect::<Vec<_>>().join(", ");
-        format!("{}: [{}]", name, times)
-    }).collect();
+    let images: Vec<_> = state
+        .config
+        .images
+        .iter()
+        .map(|(name, times)| {
+            let times = times
+                .iter()
+                .map(|time| time.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}: [{}]", name, times)
+        })
+        .collect();
     println!("images: {:#?}", images);
-    println!("image directory: {}", state.config.image_dir.to_string_lossy());
+    println!(
+        "image directory: {}",
+        state.config.image_dir.to_string_lossy()
+    );
     println!("fps: {}", state.config.fps);
 
     Ok(())
@@ -85,9 +104,26 @@ fn check(state: &State) -> anyhow::Result<()> {
         }
         for time in times {
             if let Err(e) = time.check() {
-                error!("image {}: {}. Consider creating multiple time slots", image.to_string_lossy(), e);
+                error!(
+                    "image {}: {}. Consider creating multiple time slots",
+                    image.to_string_lossy(),
+                    e
+                );
             }
         }
+    }
+
+    // FIXME: use hashset here?
+    let monitors = get_monitors()?;
+    match &state.config.monitors {
+        Monitors::Some(list) => {
+            for monitor in list {
+                if !monitors.contains(monitor) {
+                    warn!("monitor {} not available", monitor);
+                }
+            }
+        }
+        Monitors::All => {}
     }
 
     info!("checked the config for errors");
@@ -95,11 +131,16 @@ fn check(state: &State) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn switch(state: &mut State) -> anyhow::Result<()> {
+fn switch(state: &mut State, monitor: Option<String>) -> anyhow::Result<()> {
     init_sww()?;
     info!("switching one time");
 
-    update_image(state).context("while updating state")?;
+    let monitor = match monitor {
+        Some(monitor) => Monitors::Some(vec![monitor]),
+        None => Monitors::All,
+    };
+
+    update_wallpapers(state, monitor).context("while updating state")?;
 
     info!("switched one time");
     Ok(())
@@ -127,7 +168,8 @@ fn daemon(state: &mut State) -> anyhow::Result<()> {
 
         if last_time / update_interval < current_time / update_interval {
             info!("updating wallpaper");
-            update_image(state).context("while updating state")?;
+            // FIXME: allow setting only some monitors?
+            update_wallpapers(state, Monitors::All).context("while updating state")?;
         }
 
         let to_sleep = check_interval - (current_time % check_interval);
@@ -152,7 +194,7 @@ fn main() -> anyhow::Result<()> {
 
     match args.command {
         Command::Daemon => daemon(&mut state),
-        Command::Switch => switch(&mut state),
+        Command::Switch { monitor } => switch(&mut state, monitor),
         Command::Check => check(&state),
         Command::Print => print_state(&state),
     }

@@ -6,7 +6,7 @@ use anyhow::Context;
 use rand::seq::SliceRandom;
 use tracing::{debug, error, info, trace};
 
-pub use crate::config::State;
+pub use crate::config::{Monitors, State};
 
 pub fn init_sww() -> anyhow::Result<()> {
     debug!("initializing swww");
@@ -19,8 +19,34 @@ pub fn init_sww() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn update_image(state: &mut State) -> anyhow::Result<()> {
-    let mut get_image = || {
+pub fn get_monitors() -> anyhow::Result<Vec<String>> {
+    info!("trying to query monitors");
+    let cmd = std::process::Command::new("swww")
+        .arg("query")
+        .output()
+        .context("while trying to query monitors")?;
+    if !cmd.status.success() {
+        error!(
+            "swww returned error. Exit Code: {}.\nStdout: {}\n\nStderr:{}",
+            cmd.status,
+            String::from_utf8_lossy(&cmd.stdout),
+            String::from_utf8_lossy(&cmd.stderr)
+        );
+    }
+    let stdout = String::from_utf8(cmd.stdout).context("invalid command output from swww query")?;
+    stdout
+        .lines()
+        .map(|line| {
+            let (name, _rest) = line
+                .split_once(':')
+                .ok_or_else(|| anyhow::anyhow!("invalid line in output: {}", line))?;
+            Ok(name.to_owned())
+        })
+        .collect()
+}
+
+pub fn update_wallpapers(state: &mut State, monitors: Monitors) -> anyhow::Result<()> {
+    let get_image = |last_image: &Option<PathBuf>, rng: &mut rand::rngs::ThreadRng| {
         let now = chrono::offset::Local::now().time();
         let images: Vec<_> = state
             .config
@@ -32,57 +58,82 @@ pub fn update_image(state: &mut State) -> anyhow::Result<()> {
                 res
             })
             .map(|(path, _time)| state.config.image_dir.join(path))
-            .filter(|path| Some(path) != state.cache.last_image.as_ref())
+            .filter(|path| Some(path) != last_image.as_ref())
             .collect();
-        images.choose(&mut state.rng).cloned().unwrap_or_else(|| {
+        images.choose(rng).cloned().unwrap_or_else(|| {
             PathBuf::from("/usr/share/backgrounds/sway/Sway_Wallpaper_Blue_1920x1080.png")
         })
     };
-    let image = loop {
-        let image = get_image();
-        if image.is_file() {
-            break image;
-        } else {
-            error!("image {} does not exist!", image.to_string_lossy());
-        }
+    let connected_monitors = get_monitors()?;
+    let monitors = match monitors {
+        Monitors::All => connected_monitors,
+        Monitors::Some(monitors) => monitors
+            .into_iter()
+            .filter(|monitor| {
+                if connected_monitors.contains(monitor) {
+                    true
+                } else {
+                    error!("ignoring not connected monitor {}", monitor);
+                    false
+                }
+            })
+            .collect(),
     };
-    let transition = state
-        .config
-        .transitions
-        .choose(&mut state.rng)
-        .cloned()
-        .unwrap_or_else(|| String::from("simple"));
-
-    // swww img -t any --transition-step=2 --transition-fps=60 image_path.jpg
-    if Some(&image) != state.cache.last_image.as_ref() {
-        info!(
-            "updating to {} with transition {}",
-            image.to_string_lossy(),
-            &transition
-        );
-        let cmd = std::process::Command::new("swww")
-            .args(["img", "--transition-step=2", "--transition-fps"])
-            .arg(state.config.fps.to_string())
-            .arg("--transition-type")
-            .arg(&transition)
-            .arg(&image)
-            .output()
-            .context("while executing swww")?;
-
-        if !cmd.status.success() {
-            error!(
-                "swww returned error. Exit Code: {}.\nStdout: {}\n\nStderr:{}",
-                cmd.status,
-                String::from_utf8_lossy(&cmd.stdout),
-                String::from_utf8_lossy(&cmd.stderr)
-            );
-        }
-    } else {
-        info!("not changing wallpaper because it is the same");
+    if monitors.is_empty() {
+        return Err(anyhow::anyhow!("no monitors connected"));
     }
 
-    state.cache.update(image, transition);
-    state.save().context("while saving cache")?;
+    for monitor in monitors {
+        let last_image = state.cache.last_images.get(&monitor).cloned();
+
+        let image = loop {
+            let image = get_image(&last_image, &mut state.rng);
+            if image.is_file() {
+                break image;
+            } else {
+                error!("image {} does not exist!", image.to_string_lossy());
+            }
+        };
+        let transition = state
+            .config
+            .transitions
+            .choose(&mut state.rng)
+            .cloned()
+            .unwrap_or_else(|| String::from("simple"));
+
+        // swww img --transition-step=2 --transition-fps=60 --transition-type any --output monitor image_path.jpg
+        if Some(&image) != last_image.as_ref() {
+            info!(
+                "updating to {} with transition {}",
+                image.to_string_lossy(),
+                &transition
+            );
+            let cmd = std::process::Command::new("swww")
+                .args(["img", "--transition-step=2", "--transition-fps"])
+                .arg(state.config.fps.to_string())
+                .arg("--transition-type")
+                .arg(&transition)
+                .arg("--outputs")
+                .arg(&monitor)
+                .arg(&image)
+                .output()
+                .context("while executing swww")?;
+
+            if !cmd.status.success() {
+                error!(
+                    "swww returned error. Exit Code: {}.\nStdout: {}\n\nStderr:{}",
+                    cmd.status,
+                    String::from_utf8_lossy(&cmd.stdout),
+                    String::from_utf8_lossy(&cmd.stderr)
+                );
+            }
+        } else {
+            info!("not changing wallpaper because it is the same");
+        }
+
+        state.cache.update(monitor, image, transition);
+        state.save().context("while saving cache")?;
+    }
 
     Ok(())
 }

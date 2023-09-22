@@ -7,6 +7,23 @@ use humantime::{Duration, Timestamp};
 use serde::{de::Error, Deserialize, Serialize};
 use tracing::{debug, error, info};
 
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(untagged)]
+pub enum Monitors {
+    #[default]
+    All,
+    Some(Vec<String>),
+}
+
+impl Monitors {
+    fn includes(&self, monitor: &String) -> bool {
+        match self {
+            Self::All => true,
+            Self::Some(list) => list.contains(monitor),
+        }
+    }
+}
+
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(serialize_with = "ser_duration")]
@@ -20,6 +37,7 @@ pub struct Config {
     pub images: HashMap<String, Vec<ValidTime>>,
     pub image_dir: PathBuf,
     pub fps: u8,
+    pub monitors: Monitors,
 }
 
 impl Default for Config {
@@ -31,6 +49,7 @@ impl Default for Config {
             images: HashMap::new(),
             image_dir: PathBuf::default(),
             fps: 30,
+            monitors: Monitors::default(),
         }
     }
 }
@@ -43,15 +62,17 @@ pub struct Cache {
     #[serde(serialize_with = "ser_timestamp")]
     #[serde(deserialize_with = "deser_timestamp")]
     pub last_update: Timestamp,
-    pub last_transition: Option<String>,
-    pub last_image: Option<PathBuf>,
+
+    // Map from monitor to transition/ image
+    pub last_transitions: HashMap<String, String>,
+    pub last_images: HashMap<String, PathBuf>,
 }
 
 impl Cache {
-    pub fn update(&mut self, image: PathBuf, transition: String) {
+    pub fn update(&mut self, monitor: String, image: PathBuf, transition: String) {
         self.last_update = std::time::SystemTime::now().into();
-        self.last_image = Some(image);
-        self.last_transition = Some(transition);
+        self.last_images.insert(monitor.clone(), image);
+        self.last_transitions.insert(monitor, transition);
     }
 }
 
@@ -60,8 +81,8 @@ impl Default for Cache {
         Self {
             version: CACHE_VERSION,
             last_update: std::time::UNIX_EPOCH.into(),
-            last_image: None,
-            last_transition: None,
+            last_images: HashMap::new(),
+            last_transitions: HashMap::new(),
         }
     }
 }
@@ -111,11 +132,15 @@ impl State {
                     CACHE_VERSION, cache.version
                 );
             } else {
-                if cache.last_image.is_some() {
-                    self.cache.last_image = cache.last_image;
+                for (monitor, image) in cache.last_images {
+                    if self.config.monitors.includes(&monitor) {
+                        self.cache.last_images.insert(monitor, image);
+                    }
                 }
-                if cache.last_transition.is_some() {
-                    self.cache.last_transition = cache.last_transition;
+                for (monitor, transition) in cache.last_transitions {
+                    if self.config.monitors.includes(&monitor) {
+                        self.cache.last_transitions.insert(monitor, transition);
+                    }
                 }
                 self.cache.last_update = cache.last_update;
             }
