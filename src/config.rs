@@ -37,6 +37,7 @@ pub struct Config {
     pub images: HashMap<String, Vec<ValidTime>>,
     pub image_dir: PathBuf,
     pub fps: u8,
+    #[serde(default)]
     pub monitors: Monitors,
 }
 

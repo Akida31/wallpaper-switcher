@@ -1,6 +1,6 @@
 mod config;
 
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use anyhow::Context;
 use rand::seq::SliceRandom;
@@ -19,7 +19,7 @@ pub fn init_sww() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn get_monitors() -> anyhow::Result<Vec<String>> {
+pub fn get_monitors() -> anyhow::Result<HashSet<String>> {
     info!("trying to query monitors");
     let cmd = std::process::Command::new("swww")
         .arg("query")
@@ -46,7 +46,7 @@ pub fn get_monitors() -> anyhow::Result<Vec<String>> {
 }
 
 pub fn update_wallpapers(state: &mut State, monitors: Monitors) -> anyhow::Result<()> {
-    let get_image = |last_image: &Option<PathBuf>, rng: &mut rand::rngs::ThreadRng| {
+    let get_image = |last_images: &HashSet<PathBuf>, rng: &mut rand::rngs::ThreadRng| {
         let now = chrono::offset::Local::now().time();
         let images: Vec<_> = state
             .config
@@ -58,7 +58,7 @@ pub fn update_wallpapers(state: &mut State, monitors: Monitors) -> anyhow::Resul
                 res
             })
             .map(|(path, _time)| state.config.image_dir.join(path))
-            .filter(|path| Some(path) != last_image.as_ref())
+            .filter(|path| !last_images.contains(path))
             .collect();
         images.choose(rng).cloned().unwrap_or_else(|| {
             PathBuf::from("/usr/share/backgrounds/sway/Sway_Wallpaper_Blue_1920x1080.png")
@@ -66,7 +66,7 @@ pub fn update_wallpapers(state: &mut State, monitors: Monitors) -> anyhow::Resul
     };
     let connected_monitors = get_monitors()?;
     let monitors = match monitors {
-        Monitors::All => connected_monitors,
+        Monitors::All => connected_monitors.clone(),
         Monitors::Some(monitors) => monitors
             .into_iter()
             .filter(|monitor| {
@@ -80,14 +80,20 @@ pub fn update_wallpapers(state: &mut State, monitors: Monitors) -> anyhow::Resul
             .collect(),
     };
     if monitors.is_empty() {
-        return Err(anyhow::anyhow!("no monitors connected"));
+        if connected_monitors.is_empty() {
+            return Err(anyhow::anyhow!("no monitors connected"));
+        } else {
+            info!("valid monitors: {}", connected_monitors.into_iter().collect::<Vec<_>>().join(", "));
+            return Err(anyhow::anyhow!("no valid monitor available"));
+        }
     }
 
+    let last_images = state.cache.last_images.values().cloned().collect();
     for monitor in monitors {
         let last_image = state.cache.last_images.get(&monitor).cloned();
 
         let image = loop {
-            let image = get_image(&last_image, &mut state.rng);
+            let image = get_image(&last_images, &mut state.rng);
             if image.is_file() {
                 break image;
             } else {

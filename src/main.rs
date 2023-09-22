@@ -113,7 +113,6 @@ fn check(state: &State) -> anyhow::Result<()> {
         }
     }
 
-    // FIXME: use hashset here?
     let monitors = get_monitors()?;
     match &state.config.monitors {
         Monitors::Some(list) => {
