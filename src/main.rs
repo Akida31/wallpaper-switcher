@@ -30,6 +30,7 @@ fn init_logging() -> anyhow::Result<()> {
             ),
         )
         .init();
+    debug!("hello world, logging initialized :)");
 
     Ok(())
 }
