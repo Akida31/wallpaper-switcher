@@ -2,8 +2,11 @@ mod config;
 
 use std::{collections::HashSet, path::PathBuf};
 
-use anyhow::Context;
-use rand::seq::SliceRandom;
+use anyhow::{bail, Context};
+use rand::{
+    rngs::ThreadRng,
+    seq::{IteratorRandom, SliceRandom},
+};
 use tracing::{debug, error, info, trace};
 
 pub use crate::config::{Monitors, State};
@@ -46,23 +49,19 @@ pub fn get_monitors() -> anyhow::Result<HashSet<String>> {
 }
 
 pub fn update_wallpapers(state: &mut State, monitors: Monitors) -> anyhow::Result<()> {
-    let get_image = |last_images: &HashSet<PathBuf>, rng: &mut rand::rngs::ThreadRng| {
-        let now = chrono::offset::Local::now().time();
-        let images: Vec<_> = state
-            .config
-            .images
-            .iter()
-            .filter(|(path, time)| {
-                let res = time.iter().any(|t| t.matches(&now));
-                trace!("{} is valid? {}", path, res);
-                res
-            })
-            .map(|(path, _time)| state.config.image_dir.join(path))
-            .filter(|path| !last_images.contains(path))
-            .collect();
-        images.choose(rng).cloned().unwrap_or_else(|| {
-            PathBuf::from("/usr/share/backgrounds/sway/Sway_Wallpaper_Blue_1920x1080.png")
-        })
+    let get_image = |mut images: HashSet<PathBuf>, rng: &mut ThreadRng| loop {
+        let image = images.iter().choose(rng).cloned();
+        if let Some(image) = image {
+            images.remove(&image);
+            if image.is_file() {
+                break Some(image);
+            } else {
+                error!("image {} does not exist!", image.to_string_lossy());
+            }
+        } else {
+            // imagees is empty
+            break None;
+        }
     };
     let connected_monitors = get_monitors()?;
     let monitors = match monitors {
@@ -83,22 +82,69 @@ pub fn update_wallpapers(state: &mut State, monitors: Monitors) -> anyhow::Resul
         if connected_monitors.is_empty() {
             return Err(anyhow::anyhow!("no monitors connected"));
         } else {
-            info!("valid monitors: {}", connected_monitors.into_iter().collect::<Vec<_>>().join(", "));
+            info!(
+                "valid monitors: {}",
+                connected_monitors
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             return Err(anyhow::anyhow!("no valid monitor available"));
         }
     }
 
-    let last_images = state.cache.last_images.values().cloned().collect();
+    let last_images: HashSet<_> = state.cache.last_images.values().cloned().collect();
     for monitor in monitors {
         let last_image = state.cache.last_images.get(&monitor).cloned();
 
-        let image = loop {
-            let image = get_image(&last_images, &mut state.rng);
-            if image.is_file() {
-                break image;
+        let now = chrono::offset::Local::now().time();
+        let valid_images = || {
+            state
+                .config
+                .images
+                .iter()
+                .filter(|(path, time)| {
+                    let res = time.iter().any(|t| t.matches(&now));
+                    trace!("{} is valid? {}", path, res);
+                    res
+                })
+                .map(|(path, _time)| state.config.image_dir.join(path))
+        };
+        let image = get_image(
+            // try valid images which were not used before first
+            valid_images()
+                .filter(|path| !last_images.contains(path))
+                .collect(),
+            &mut state.rng,
+        )
+        .or_else(|| {
+            // try valid images which were used before next
+            get_image(valid_images().collect(), &mut state.rng)
+        })
+        .or_else(|| {
+            // try all images next
+            get_image(
+                state
+                    .config
+                    .images
+                    .iter()
+                    .map(|(path, _time)| state.config.image_dir.join(path))
+                    .collect(),
+                &mut state.rng,
+            )
+        })
+        .or_else(|| {
+            // try default image
+            let default =
+                PathBuf::from("/usr/share/backgrounds/sway/Sway_Wallpaper_Blue_1920x1080.png");
+            if default.is_file() {
+                Some(default)
             } else {
-                error!("image {} does not exist!", image.to_string_lossy());
+                None
             }
+        });
+        let Some(image) = image else {
+            bail!("no valid image found")
         };
         let transition = state
             .config
