@@ -9,7 +9,7 @@ use rand::{
 };
 use tracing::{debug, error, info, trace};
 
-pub use crate::config::{Monitors, State};
+pub use crate::config::{Monitors, State, ValidTime};
 
 pub fn init_sww() -> anyhow::Result<()> {
     debug!("initializing swww");

@@ -282,6 +282,17 @@ impl ValidTime {
             date.format("%H")
         }
     }
+
+    const MIN: NaiveTime = NaiveTime::MIN;
+    const MAX: NaiveTime = match NaiveTime::from_hms_nano_opt(23, 59, 59, 1_999_999_999) {
+        Some(v) => v,
+        None => panic!("max time is valid"),
+    };
+
+    pub const ALL: Self = Self {
+        start: Self::MIN,
+        end: Self::MAX,
+    };
 }
 
 impl std::fmt::Display for ValidTime {
@@ -306,7 +317,6 @@ impl<'de> serde::Deserialize<'de> for ValidTime {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?.trim().to_owned();
-        let max = NaiveTime::from_hms_nano_opt(23, 59, 59, 1_999_999_999).unwrap();
 
         fn from_s<'de, D: serde::Deserializer<'de>>(
             s: &str,
@@ -318,8 +328,7 @@ impl<'de> serde::Deserialize<'de> for ValidTime {
                 Ok(t)
             } else if let Ok(v) = s.parse() {
                 if v == 24 {
-                    let max = NaiveTime::from_hms_nano_opt(23, 59, 59, 1_999_999_999).unwrap();
-                    Ok(max)
+                    Ok(ValidTime::MAX)
                 } else {
                     NaiveTime::from_hms_opt(v, 0, 0).ok_or_else(|| {
                         D::Error::custom(format!("invalid hour for {} in {}", what, s))
@@ -334,7 +343,7 @@ impl<'de> serde::Deserialize<'de> for ValidTime {
         }
 
         let (start, end) = if s == "*" {
-            (NaiveTime::MIN, max)
+            (Self::MIN, Self::MAX)
         } else if s.contains('-') {
             let (start_s, end_s) = s.split_once('-').unwrap();
 

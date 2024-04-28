@@ -1,3 +1,5 @@
+use std::{collections::HashMap, path::Path};
+
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use tracing::{debug, error, info, warn, Level};
@@ -6,7 +8,7 @@ use tracing_subscriber::{
     Layer,
 };
 
-use wallpaper::{get_monitors, init_sww, update_wallpapers, Monitors, State};
+use wallpaper::{get_monitors, init_sww, update_wallpapers, Monitors, State, ValidTime};
 
 fn init_logging() -> anyhow::Result<()> {
     let project_dirs = State::project_dirs()?;
@@ -50,6 +52,13 @@ enum Command {
     Switch {
         /// Only switch the wallpaper for this monitor
         monitor: Option<String>,
+    },
+    /// Select an image (or folder of images) which will be shown
+    Select {
+        path: String,
+        /// whether to keep the old images
+        #[arg(default_value_t = false)]
+        keep_old: bool,
     },
     /// Check the config for errors
     Check,
@@ -146,6 +155,44 @@ fn switch(state: &mut State, monitor: Option<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn select(state: &mut State, path: &str, keep_old: bool) -> anyhow::Result<()> {
+    fn get_images_rec(path: &Path) -> anyhow::Result<HashMap<String, Vec<ValidTime>>> {
+        let mut res = HashMap::new();
+        if path.is_file() {
+            let path_s = path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("path {} is not valid utf-8", path.display()))?
+                .to_string();
+            res.insert(path_s, vec![ValidTime::ALL]);
+        } else {
+            for entry in std::fs::read_dir(path).context("reading image directory")? {
+                let entry = entry.context("getting image directory entry")?;
+                res.extend(get_images_rec(&entry.path())?);
+            }
+        }
+        Ok(res)
+    }
+    init_sww()?;
+
+    let new_images = get_images_rec(path.as_ref())?;
+
+    info!(
+        "selected image path {} with {} images",
+        path,
+        new_images.len()
+    );
+
+    if keep_old {
+        state.config.images.extend(new_images);
+    } else {
+        state.config.images = new_images;
+    }
+
+    update_wallpapers(state, Monitors::All).context("while updating state")?;
+
+    Ok(())
+}
+
 fn daemon(state: &mut State) -> anyhow::Result<()> {
     init_sww()?;
     info!("starting mainloop");
@@ -195,6 +242,7 @@ fn main() -> anyhow::Result<()> {
     match args.command {
         Command::Daemon => daemon(&mut state),
         Command::Switch { monitor } => switch(&mut state, monitor),
+        Command::Select { path, keep_old } => select(&mut state, &path, keep_old),
         Command::Check => check(&state),
         Command::Print => print_state(&state),
     }
