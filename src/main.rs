@@ -92,7 +92,7 @@ fn print_state(state: &State) -> anyhow::Result<()> {
         .map(|(name, times)| {
             let times = times
                 .iter()
-                .map(|time| time.to_string())
+                .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("{}: [{}]", name, times)

@@ -141,8 +141,8 @@ impl Client {
         let (sender, recv) = channel();
         let (fin_sender, fin_recv) = channel();
 
-        let handle = thread::spawn(move || {
-            for event in recv.iter() {
+        thread::spawn(move || {
+            for event in &recv {
                 debug!("received event");
                 let mut buf = match serde_json::to_vec(&event) {
                     Ok(b) => b,
@@ -164,8 +164,6 @@ impl Client {
             warn!("ipc sender disconnected");
             let _ = stream.shutdown(Shutdown::Write);
         });
-
-        assert!(!handle.is_finished());
 
         debug!("connected sender");
 

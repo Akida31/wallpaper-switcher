@@ -128,8 +128,8 @@ pub fn update_wallpapers(state: &mut State, monitors: Monitors) -> anyhow::Resul
                 state
                     .config
                     .images
-                    .iter()
-                    .map(|(path, _time)| state.config.image_dir.join(path))
+                    .keys()
+                    .map(|path| state.config.image_dir.join(path))
                     .collect(),
                 &mut state.rng,
             )
