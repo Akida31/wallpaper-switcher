@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path};
+use std::{collections::BTreeMap, path::Path, sync::mpsc::RecvTimeoutError};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
@@ -8,7 +8,11 @@ use tracing_subscriber::{
     Layer,
 };
 
-use wallpaper::{get_monitors, init_sww, update_wallpapers, Monitors, State, ValidTime};
+use wallpaper::{
+    get_monitors, init_sww,
+    ipc::{self, IpcEvent},
+    update_wallpapers, Monitors, State, ValidTime,
+};
 
 fn init_logging() -> anyhow::Result<()> {
     let project_dirs = State::project_dirs()?;
@@ -141,7 +145,6 @@ fn check(state: &State) -> anyhow::Result<()> {
 }
 
 fn switch(state: &mut State, monitor: Option<String>) -> anyhow::Result<()> {
-    init_sww()?;
     info!("switching one time");
 
     let monitor = match monitor {
@@ -156,8 +159,8 @@ fn switch(state: &mut State, monitor: Option<String>) -> anyhow::Result<()> {
 }
 
 fn select(state: &mut State, path: &str, keep_old: bool) -> anyhow::Result<()> {
-    fn get_images_rec(path: &Path) -> anyhow::Result<HashMap<String, Vec<ValidTime>>> {
-        let mut res = HashMap::new();
+    fn get_images_rec(path: &Path) -> anyhow::Result<BTreeMap<String, Vec<ValidTime>>> {
+        let mut res = BTreeMap::new();
         if path.is_file() {
             let path_s = path
                 .to_str()
@@ -172,7 +175,6 @@ fn select(state: &mut State, path: &str, keep_old: bool) -> anyhow::Result<()> {
         }
         Ok(res)
     }
-    init_sww()?;
 
     let new_images = get_images_rec(path.as_ref())?;
 
@@ -195,6 +197,9 @@ fn select(state: &mut State, path: &str, keep_old: bool) -> anyhow::Result<()> {
 
 fn daemon(state: &mut State) -> anyhow::Result<()> {
     init_sww()?;
+
+    let listener = ipc::Listener::bind().context("while starting ipc server")?;
+
     info!("starting mainloop");
 
     loop {
@@ -222,14 +227,54 @@ fn daemon(state: &mut State) -> anyhow::Result<()> {
         let to_sleep = check_interval - (current_time % check_interval);
 
         debug!("waiting for next time :)");
-        std::thread::sleep(std::time::Duration::from_nanos(
-            to_sleep.try_into().context("can't sleep that long")?,
-        ));
+        let sleep_duration =
+            std::time::Duration::from_nanos(to_sleep.try_into().context("can't sleep that long")?);
+
+        let mut handle_msg = |msg| match msg {
+            IpcEvent::Reload => {
+                debug!("reloading state (ipc)");
+                if let Err(e) = state.force_reload() {
+                    error!("can't reload state: {}", e);
+                }
+                debug!("reloaded state (ipc)");
+            }
+            IpcEvent::Switch { monitor } => {
+                if let Err(e) = switch(state, monitor) {
+                    error!("can't switch wallpaper: {}", e);
+                }
+            }
+            IpcEvent::Select { path, keep_old } => {
+                if let Err(e) = select(state, &path, keep_old) {
+                    error!("can't select wallpaper: {}", e);
+                }
+            }
+        };
+
+        match listener.recv_timeout(sleep_duration) {
+            Ok(msg) => {
+                handle_msg(msg);
+                // process pending messages
+                while let Ok(msg) = listener.try_recv() {
+                    handle_msg(msg);
+                }
+            }
+            Err(e) => match e {
+                RecvTimeoutError::Timeout => {}
+                RecvTimeoutError::Disconnected => todo!(),
+            },
+        }
 
         debug!("reloading state");
         state.reload().context("while reloading state")?;
         debug!("reloaded state");
     }
+}
+
+fn run_ipc(msg: IpcEvent) -> anyhow::Result<()> {
+    let sender = ipc::Client::connect()?;
+    sender.send(msg)?;
+
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -241,8 +286,8 @@ fn main() -> anyhow::Result<()> {
 
     match args.command {
         Command::Daemon => daemon(&mut state),
-        Command::Switch { monitor } => switch(&mut state, monitor),
-        Command::Select { path, keep_old } => select(&mut state, &path, keep_old),
+        Command::Switch { monitor } => run_ipc(IpcEvent::Switch { monitor }),
+        Command::Select { path, keep_old } => run_ipc(IpcEvent::Select { path, keep_old }),
         Command::Check => check(&state),
         Command::Print => print_state(&state),
     }

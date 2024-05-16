@@ -1,4 +1,5 @@
 mod config;
+pub mod ipc;
 
 use std::{collections::HashSet, path::PathBuf};
 
